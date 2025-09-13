@@ -42,7 +42,7 @@ python src/main.py
 
 ## 项目结构
 
-```
+```text
 v8autocode/
 ├── src/                    # 源代码
 │   ├── main.py            # 主入口
