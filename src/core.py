@@ -8,7 +8,9 @@ DOCX文档提取器核心模块
 
 import logging
 import os
-from typing import Dict, List, Tuple
+import re
+import hashlib
+from typing import Dict, List, Tuple, Optional, Any
 
 from docx import Document
 
@@ -40,10 +42,18 @@ LEVEL_3_MULTIPLIER = 3  # Level 3 宽度倍数
 class DocumentExtractor:
     """DOCX文档提取器核心类"""
     
-    def __init__(self) -> None:
-        """初始化提取器"""
+    def __init__(self, config: Optional[Any] = None) -> None:
+        """初始化提取器
+        
+        Args:
+            config: 可选配置对象，需包含 output_format/text_width/text_indent 等属性
+        """
         self.logger: logging.Logger = logging.getLogger(__name__)
         self.current_table = None
+        # 配置相关（带默认值，避免强耦合）
+        self.output_format: str = getattr(config, 'output_format', 'txt') if config else 'txt'
+        self.text_width: int = getattr(config, 'text_width', 100) if config else 100
+        self.text_indent: str = getattr(config, 'text_indent', DEFAULT_INDENT) if config else DEFAULT_INDENT
         
     def _get_char_width(self, char: str) -> int:
         """获取字符的显示宽度"""
@@ -86,21 +96,70 @@ class DocumentExtractor:
         return '\n'.join(result_lines)
     
     def _process_heading(self, paragraph) -> str:
-        """处理标题段落"""
+        """处理标题段落（在 md 模式下注入稳定锚点）"""
         text = paragraph.text.strip()
         if not text:
             return ""
-            
-        # 根据标题级别添加不同数量的#
+        
+        # 标题级别
         level = paragraph.style.name.lower()
+        level_num = None
         if 'heading' in level:
             try:
                 level_num = int(level[-1])
-                return f"{'#' * level_num} {text}\n"
             except ValueError:
-                pass
-                
-        return f"# {text}\n"
+                level_num = None
+
+        prefix = (HEADING_PREFIX * level_num + ' ') if level_num else (HEADING_PREFIX + ' ')
+
+        # 在 md 模式下，规范 cmd 标注与锚点
+        if self.output_format == 'md':
+            norm_text = text.replace('（', '(').replace('）', ')')
+            # 归一化 cmd 大小写与空格
+            norm_text = re.sub(r'\bCMD\b', 'cmd', norm_text, flags=re.I)
+            cmd_match = re.search(r'cmd\s*=\s*(\d+)', norm_text, flags=re.I)
+            anchor_line = ''
+            if cmd_match:
+                cmd_val = int(cmd_match.group(1))
+                anchor_id = f"cmd-{cmd_val:03d}"
+                # 若文本未带标准 [cmd=xxx]，追加标准化标注
+                if not re.search(r'\[\s*cmd\s*=\s*\d+\s*\]', norm_text, flags=re.I):
+                    norm_text = f"{norm_text} [cmd={cmd_val:03d}]"
+                anchor_line = f"<a id=\"{anchor_id}\"></a>\n"
+            else:
+                # 为无 cmd 的标题生成稳定锚点（基于内容的短哈希）
+                digest = hashlib.sha1(norm_text.encode('utf-8')).hexdigest()[:8]
+                anchor_id = f"sec-{digest}"
+                anchor_line = f"<a id=\"{anchor_id}\"></a>\n"
+            return f"{anchor_line}{prefix}{norm_text}\n"
+
+        # 非 md 模式：保持原逻辑
+        return f"{prefix}{text}\n"
+    
+    def _process_pseudo_cmd_title(self, text: str) -> str:
+        """处理伪CMD标题（普通段落中识别的CMD格式）"""
+        # 规范化文本：全角→半角，统一cmd大小写
+        norm_text = text.replace('（', '(').replace('）', ')')
+        norm_text = re.sub(r'\bCMD\b', 'cmd', norm_text, flags=re.I)
+        
+        # 提取 CMD 编号
+        cmd_match = re.search(r'cmd\s*=\s*(\d+)', norm_text, flags=re.I)
+        anchor_line = ''
+        if cmd_match:
+            cmd_val = int(cmd_match.group(1))
+            anchor_id = f"cmd-{cmd_val:03d}"
+            # 若文本未带标准 [cmd=xxx]，追加标准化标注
+            if not re.search(r'\[\s*cmd\s*=\s*\d+\s*\]', norm_text, flags=re.I):
+                norm_text = f"{norm_text} [cmd={cmd_val:03d}]"
+            anchor_line = f"<a id=\"{anchor_id}\"></a>\n"
+        else:
+            # 生成基于内容的哈希锚点（备用）
+            digest = hashlib.sha1(norm_text.encode('utf-8')).hexdigest()[:8]
+            anchor_id = f"sec-{digest}"
+            anchor_line = f"<a id=\"{anchor_id}\"></a>\n"
+        
+        # 作为三级标题输出
+        return f"{anchor_line}### {norm_text}\n\n"
     
     def _wrap_text_by_width(self, text: str, max_width: int = DEFAULT_MAX_WIDTH, indent: str = "") -> str:
         """按照视觉宽度对文本自动换行"""
@@ -168,12 +227,22 @@ class DocumentExtractor:
             try:
                 level = int(paragraph.style.name.lower()[-1])
                 prefix = HEADING_PREFIX * level + ' '
+                if self.output_format == 'md':
+                    # 在 md 模式下也走标题处理，保证锚点一致
+                    return self._process_heading(paragraph) + "\n"
                 return f"{prefix}{text}\n\n"
             except ValueError:
                 prefix = HEADING_PREFIX + ' '
                 return f"{prefix}{text}\n\n"
+        
+        # 在 md 模式下，识别形如 "x.x.x (CMD=xxx)" 的伪标题段落
+        if self.output_format == 'md':
+            cmd_pattern = r'^\s*\d+\.\d+(?:\.\d+)?\s*\([Cc][Mm][Dd]\s*=\s*\d+\)'
+            if re.match(cmd_pattern, text):
+                # 将伪标题按三级标题处理
+                return self._process_pseudo_cmd_title(text)
             
-        wrapped_text = self._wrap_text_by_width(text, max_width=100, indent=DEFAULT_INDENT)
+        wrapped_text = self._wrap_text_by_width(text, max_width=self.text_width, indent=self.text_indent)
         return wrapped_text + "\n\n"
     
     # 表格处理相关方法（保持原有复杂逻辑）
@@ -448,8 +517,13 @@ class DocumentExtractor:
                 result.append(self._format_table_row(row_data, col_widths, line_idx))
         
         result.append(separator)
+        ascii_table = '\n'.join(result) + '\n'
         
-        return '\n'.join(result) + '\n'
+        # 在 md 模式下，用代码块包裹 ASCII 表格，兼顾可读性与通用性
+        if self.output_format == 'md':
+            return f"```text\n{ascii_table}```\n\n"
+        
+        return ascii_table
 
     def _process_table(self, table) -> str:
         """处理表格，保持原始格式和对齐方式"""

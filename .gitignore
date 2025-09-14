@@ -2,6 +2,7 @@
 dist/
 build/
 samples/
+output/
 *.spec
 
 # Python 缓存

@@ -86,15 +86,16 @@ def process_single_file(input_file: str, output_dir: str,
         处理是否成功
     """
     try:
-        extractor = DocumentExtractor()
+        extractor = DocumentExtractor(config)
         content = extractor.extract_content(input_file)
         
         # 确定输出文件路径
         input_path = Path(input_file)
+        ext = '.md' if getattr(config, 'output_format', 'txt') == 'md' else '.txt'
         if output_dir:
-            output_path = Path(output_dir) / f"{input_path.stem}.txt"
+            output_path = Path(output_dir) / f"{input_path.stem}{ext}"
         else:
-            output_path = input_path.with_suffix('.txt')
+            output_path = input_path.with_suffix(ext)
         
         # 确保输出目录存在
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +139,7 @@ def main() -> int:
     # 格式控制参数
     parser.add_argument('--width', type=int, default=80, help='文本行宽度（默认80字符）')
     parser.add_argument('--indent', default='    ', help='段落缩进（默认4个空格）')
+    parser.add_argument('--fmt', choices=['txt','md'], default='txt', help='输出格式（txt 或 md，默认 txt）')
     
     # 处理模式参数
     parser.add_argument('--batch', action='store_true', help='批量处理模式（递归查找所有DOCX文件）')
@@ -169,6 +171,8 @@ def main() -> int:
         config.text_width = args.width
     if args.indent != '    ':
         config.text_indent = args.indent
+    if args.fmt:
+        config.output_format = args.fmt
     
     try:
         # 查找要处理的文件
