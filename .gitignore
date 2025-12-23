@@ -1,0 +1,51 @@
+# 构建产物和可执行文件
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+samples/
+output/
+*.spec
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 注意：不再生成日志文件，日志仅输出到控制台
+
+# Word 临时文件
+~$*.docx
+~$*.doc
+
+# 生成的文本文件
+*.txt
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# 测试覆盖率
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
